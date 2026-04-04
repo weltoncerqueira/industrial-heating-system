@@ -1,0 +1,12 @@
+services:
+  servidor-integracao:
+    build: .
+    container_name: servidor_industrial
+    # O modo host permite que o servidor ouça em 8080 (TCP), 8081 (HTTP) e 8082 (UDP) 
+    # diretamente na placa de rede do PC.
+    network_mode: host
+    restart: always
+    environment:
+      - PORT_TCP=8080
+      - PORT_HTTP=8081
+      - PORT_UDP=8082

@@ -1,0 +1,12 @@
+services:
+  sensor-termico:
+    build: .
+    container_name: sensor_01
+    network_mode: host
+    restart: always
+    environment:
+      # SUBSTITUA pelo IP do PC que está rodando o Servidor
+      - INTEGRATION_HOST=192.168.1.100 
+      - DEVICE_ID=sensor-01
+      - DEVICE_NAME=Sensor_Bloco_A
+    # Importante: O sensor ouve comandos na porta 8083/UDP

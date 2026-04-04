@@ -1,0 +1,13 @@
+services:
+  atuador-aquecedor:
+    build: .
+    container_name: atuador_01
+    network_mode: host
+    restart: always
+    environment:
+      # SUBSTITUA pelo IP do PC que está rodando o Servidor
+      - INTEGRATION_HOST=192.168.1.100
+      - DEVICE_ID=atuador-01
+      - DEVICE_NAME=Aquecedor_Principal
+      # Define qual sensor este atuador vai influenciar
+      - SENSOR_PAREADO_ID=sensor-01
