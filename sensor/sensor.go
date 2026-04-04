@@ -72,6 +72,10 @@ func main() {
 // ENVIO DE DADOS
 // =====================
 
+// =====================
+// ENVIO DE DADOS (COM SIMULAÇÃO DE QUEDA REALISTA)
+// =====================
+
 func loopSimulacaoEEnvio(hostServidor string) {
 	serverAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:8082", hostServidor))
 	if err != nil {
@@ -87,45 +91,62 @@ func loopSimulacaoEEnvio(hostServidor string) {
 	defer conn.Close()
 
 	ticker := time.NewTicker(2 * time.Second)
+	tempAmbiente := 25.0
 
 	for range ticker.C {
 		mu.Lock()
 
-		// Simulação térmica
-		dispositivo.Temperatura += (rand.Float64() - 0.5) * 0.2
+		// 1. Ruído constante (pequena oscilação natural de 0.1°C)
+		dispositivo.Temperatura += (rand.Float64() - 0.5) * 0.1
 
+		// 2. Lógica de Simulação Física
 		if dispositivo.TemperaturaAlvo > 0 {
+			// AQUECIMENTO ATIVO: O atuador está ligado e buscando o alvo
 			diff := dispositivo.TemperaturaAlvo - dispositivo.Temperatura
+			// Sobe ou desce em direção ao alvo (passo de 10% da diferença)
 			dispositivo.Temperatura += diff * 0.1
+			dispositivo.Status = "aquecendo" // Status simples para aquecimento
 		} else {
-			// resfriamento natural
-			if dispositivo.Temperatura > 25 {
-				dispositivo.Temperatura -= 0.1
+			// RESFRIAMENTO PASSIVO (Atuador Desligado ou Alvo 0)
+			if dispositivo.Temperatura > tempAmbiente+0.5 {
+				// Lei do resfriamento: perde 5% da diferença para o ambiente por ciclo
+				perda := (dispositivo.Temperatura - tempAmbiente) * 0.05
+
+				// Garante uma queda mínima de 0.5°C para não ficar lento demais no final
+				if perda < 0.5 {
+					perda = 0.5
+				}
+				dispositivo.Temperatura -= perda
+				dispositivo.Status = "resfriando" // Status para resfriamento
+			} else {
+				// Estabiliza na temperatura ambiente com leve oscilação
+				dispositivo.Temperatura = tempAmbiente + (rand.Float64() * 0.4)
+				dispositivo.Status = "ocioso" // Status quando está em temperatura ambiente
 			}
 		}
 
 		dispositivo.UltimaAtualizacao = time.Now()
 
+		// 3. Empacotamento e Envio
 		data, _ := json.Marshal(dispositivo)
-
 		msg := Mensagem{
 			Tipo:     "dados_sensor",
 			De:       dispositivo.ID,
 			Para:     "servidor",
 			Conteudo: data,
 		}
-
 		mu.Unlock()
 
 		final, _ := json.Marshal(msg)
-
 		_, err := conn.Write(final)
+
 		if err != nil {
 			fmt.Println("⚠️ Erro ao enviar:", err)
 		} else {
-			fmt.Printf("📊 Temp: %.2f°C | Alvo: %.1f°C\n",
+			fmt.Printf("📊 Temp: %.2f°C | Alvo: %.1f°C | Status: %s\n",
 				dispositivo.Temperatura,
-				dispositivo.TemperaturaAlvo)
+				dispositivo.TemperaturaAlvo,
+				dispositivo.Status)
 		}
 	}
 }
@@ -172,6 +193,17 @@ func escutarComandosServidor(porta string) {
 			continue
 		}
 
+		// CORREÇÃO: Verificar se é comando de resfriamento natural
+		if cmd, exists := payload["comando"].(string); exists && cmd == "resfriar_natural" {
+			mu.Lock()
+			dispositivo.TemperaturaAlvo = 0.0
+			fmt.Printf("🌡️ RESFRIAMENTO NATURAL iniciado (alvo=0) - temperatura atual: %.2f°C\n",
+				dispositivo.Temperatura)
+			mu.Unlock()
+			continue
+		}
+
+		// Processar temperatura alvo normalmente
 		var novoAlvo float64
 		var ok bool
 
@@ -193,7 +225,12 @@ func escutarComandosServidor(porta string) {
 		mu.Lock()
 		if dispositivo.TemperaturaAlvo != novoAlvo {
 			dispositivo.TemperaturaAlvo = novoAlvo
-			fmt.Printf("🌡️ NOVO ALVO RECEBIDO de %s: %.1f°C\n", addr.IP.String(), novoAlvo)
+			if novoAlvo == 0.0 {
+				fmt.Printf("🌡️ AQUECIMENTO DESLIGADO (alvo=0) - resfriamento natural em %s\n",
+					addr.IP.String())
+			} else {
+				fmt.Printf("🌡️ NOVO ALVO RECEBIDO de %s: %.1f°C\n", addr.IP.String(), novoAlvo)
+			}
 		}
 		mu.Unlock()
 	}

@@ -130,26 +130,41 @@ func tratarConexaoTCP(conn net.Conn) {
 			fmt.Printf("✅ [TCP] Atuador registrado: %s em %s\n", dTemp.ID, ip)
 
 		case "comando":
-			// Comandos vindo do Cliente/Dashboard para o Atuador
 			servico.mutex.RLock()
 			atuador, existe := servico.dispositivos[msg.Para]
 			servico.mutex.RUnlock()
 
 			if existe && atuador.ConexaoTCP != nil {
-				// Repassa o comando para o atuador (Ligar/Desligar)
+				// 1. Repassa o comando original para o atuador
 				fmt.Fprintf(atuador.ConexaoTCP, "%s\n", scanner.Text())
 
 				var dadosCmd map[string]interface{}
 				json.Unmarshal(msg.Conteudo, &dadosCmd)
 
-				// LÓGICA DE SINCRONIA:
+				// 2. Atualiza o status do atuador no servidor
+				servico.mutex.Lock()
+				if status, ok := dadosCmd["status"].(string); ok {
+					atuador.Status = status
+					fmt.Printf("📝 [TCP] Atuador %s atualizado: status=%s\n", atuador.ID, status)
+				}
+
+				// Se tiver target_temperature, atualiza também
+				if targetTemp, ok := dadosCmd["target_temperature"].(float64); ok {
+					atuador.TemperaturaAlvo = targetTemp
+					fmt.Printf("📝 [TCP] Atuador %s atualizado: target=%.1f°C\n", atuador.ID, targetTemp)
+				}
+				atuador.UltimaAtualizacao = time.Now()
+				servico.mutex.Unlock()
+
+				// 3. CORREÇÃO: Quando desligar, envia 0 (zero) para o sensor iniciar resfriamento passivo
 				if status, ok := dadosCmd["status"].(string); ok && status == "desligado" {
-					// Se o comando foi desligar, avisamos o sensor para parar de aquecer (0.0)
 					if atuador.SensorPareadoID != "" {
+						// Envia 0 para indicar que não há alvo de aquecimento
+						// O sensor então usará sua lógica de resfriamento passivo
 						go notificarSensorUDP(atuador.SensorPareadoID, 0.0)
+						fmt.Printf("📉 [Sincronia] Sensor %s: resfriamento natural iniciado (alvo=0)\n", atuador.SensorPareadoID)
 					}
 				} else if val, ok := dadosCmd["target_temperature"].(float64); ok {
-					// Se foi um comando de temperatura, passamos o valor alvo
 					if atuador.SensorPareadoID != "" {
 						go notificarSensorUDP(atuador.SensorPareadoID, val)
 					}
@@ -226,6 +241,7 @@ func notificarSensorUDP(sensorID string, novaTemp float64) {
 	servico.mutex.RUnlock()
 
 	if ip == "" {
+		fmt.Printf("⚠️ [UDP] Sensor %s não encontrado para notificação\n", sensorID)
 		return
 	}
 
@@ -233,14 +249,37 @@ func notificarSensorUDP(sensorID string, novaTemp float64) {
 	addr, _ := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:8083", ip))
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
+		fmt.Printf("⚠️ [UDP] Erro ao conectar ao sensor %s: %v\n", sensorID, err)
 		return
 	}
 	defer conn.Close()
 
-	payload, _ := json.Marshal(map[string]interface{}{"target_temperature": novaTemp})
+	// Payload diferente baseado no valor
+	var payload []byte
+	if novaTemp == 0.0 {
+		// Quando é 0, significa "desligar aquecimento" (resfriamento natural)
+		payload, _ = json.Marshal(map[string]interface{}{
+			"temperatura_alvo": 0.0,
+			"comando":          "resfriar_natural",
+		})
+	} else {
+		payload, _ = json.Marshal(map[string]interface{}{
+			"target_temperature": novaTemp,
+		})
+	}
+
 	msg := Mensagem{Tipo: "ajustar_simulacao", Conteudo: payload}
 	b, _ := json.Marshal(msg)
-	conn.Write(b)
+
+	if _, err := conn.Write(b); err != nil {
+		fmt.Printf("⚠️ [UDP] Erro ao enviar para sensor %s: %v\n", sensorID, err)
+	} else {
+		if novaTemp == 0.0 {
+			fmt.Printf("📨 [UDP] Sensor %s notificado para RESFRIAMENTO NATURAL\n", sensorID)
+		} else {
+			fmt.Printf("📨 [UDP] Sensor %s notificado para ALVO %.1f°C\n", sensorID, novaTemp)
+		}
+	}
 }
 
 // --- API HTTP (DASHBOARD) ---
@@ -276,6 +315,17 @@ func monitorarSistema() {
 		servico.mutex.RLock()
 		fmt.Printf("\n--- 📈 STATUS ATUAL: %d DISPOSITIVOS | %d CONEXÕES TCP ---\n",
 			len(servico.dispositivos), len(servico.clientesTCP))
+
+		// Mostra detalhes dos atuadores
+		for id, d := range servico.dispositivos {
+			if d.Tipo == "atuador" {
+				fmt.Printf("  🔧 Atuador %s: Status=%s, Alvo=%.1f°C, SensorPareado=%s\n",
+					id, d.Status, d.TemperaturaAlvo, d.SensorPareadoID)
+			} else if d.Tipo == "sensor" {
+				fmt.Printf("  🌡️ Sensor %s: Temp=%.2f°C, Status=%s\n",
+					id, d.Temperatura, d.Status)
+			}
+		}
 		servico.mutex.RUnlock()
 	}
 }

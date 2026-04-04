@@ -91,7 +91,7 @@ go run main.go
 cd industrial-heating-system
 cd sensor
 # Exemplo para o primeiro sensor
-go run sensor.go -id="sensor-01" -host="172.30.44.155" -porta=":8083"
+go run sensor.go -id="sensor-01" -host="172.30.44.155" -porta="8083"
 ```
 
 ---
