@@ -46,7 +46,6 @@ func main() {
 	hostFlag := flag.String("host", "127.0.0.1", "IP do servidor")
 
 	flag.Parse()
-
 	dispositivo = Dispositivo{
 		ID:              *idFlag,
 		Nome:            fmt.Sprintf("Sensor Térmico %s", *idFlag),
@@ -193,7 +192,7 @@ func escutarComandosServidor(porta string) {
 			continue
 		}
 
-		// CORREÇÃO: Verificar se é comando de resfriamento natural
+		//Verificar se é comando de resfriamento natural
 		if cmd, exists := payload["comando"].(string); exists && cmd == "resfriar_natural" {
 			mu.Lock()
 			dispositivo.TemperaturaAlvo = 0.0
@@ -207,11 +206,6 @@ func escutarComandosServidor(porta string) {
 		var novoAlvo float64
 		var ok bool
 
-		if v, exists := payload["target_temperature"].(float64); exists {
-			novoAlvo = v
-			ok = true
-		}
-
 		if v, exists := payload["temperatura_alvo"].(float64); exists {
 			novoAlvo = v
 			ok = true
@@ -222,6 +216,7 @@ func escutarComandosServidor(porta string) {
 			continue
 		}
 
+		//Verifico se os dados são os mesmos. Em caso negativo, eu atualizo
 		mu.Lock()
 		if dispositivo.TemperaturaAlvo != novoAlvo {
 			dispositivo.TemperaturaAlvo = novoAlvo

@@ -57,7 +57,6 @@ func main() {
 }
 
 // --- SERVIDOR TCP (COMANDOS E ATUADORES) ---
-
 func iniciarServidorTCP() {
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
@@ -76,8 +75,8 @@ func iniciarServidorTCP() {
 }
 
 func tratarConexaoTCP(conn net.Conn) {
-	remoteAddr := conn.RemoteAddr().String()
-	ip, _, _ := net.SplitHostPort(remoteAddr)
+	remoteAddr := conn.RemoteAddr().String()  //Pega endereço e converte para String
+	ip, _, _ := net.SplitHostPort(remoteAddr) //Separa IP de Porta
 
 	servico.mutex.Lock()
 	servico.clientesTCP[conn] = true
@@ -86,7 +85,7 @@ func tratarConexaoTCP(conn net.Conn) {
 	defer func() {
 		servico.mutex.Lock()
 		delete(servico.clientesTCP, conn)
-		// Limpa a referência da conexão no dispositivo se ele cair
+		// percorre os dispositivos (atuadores)
 		for _, d := range servico.dispositivos {
 			if d.ConexaoTCP == conn {
 				d.ConexaoTCP = nil
@@ -97,10 +96,13 @@ func tratarConexaoTCP(conn net.Conn) {
 		conn.Close()
 	}()
 
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
+	dadosRecebidos := bufio.NewScanner(conn)
+	//Loop infinito até parar de receber dados
+
+	for dadosRecebidos.Scan() {
 		var msg Mensagem
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+		//Jason (bytes) -> struct Go (msg)
+		if err := json.Unmarshal(dadosRecebidos.Bytes(), &msg); err != nil {
 			continue
 		}
 
@@ -111,6 +113,7 @@ func tratarConexaoTCP(conn net.Conn) {
 				continue
 			}
 
+			//Cadastro de dispositivo
 			servico.mutex.Lock()
 			if d, existe := servico.dispositivos[dTemp.ID]; existe {
 				d.ConexaoTCP = conn
@@ -121,10 +124,12 @@ func tratarConexaoTCP(conn net.Conn) {
 					d.SensorPareadoID = dTemp.SensorPareadoID
 				}
 			} else {
+
 				dTemp.ConexaoTCP = conn
 				dTemp.Endereco = ip
 				dTemp.UltimaAtualizacao = time.Now()
 				servico.dispositivos[dTemp.ID] = &dTemp
+				//Talvez aqui tenha d.SensorPareadoID = dTemp.SensorPareadoID
 			}
 			servico.mutex.Unlock()
 			fmt.Printf("✅ [TCP] Atuador registrado: %s em %s\n", dTemp.ID, ip)
@@ -136,7 +141,7 @@ func tratarConexaoTCP(conn net.Conn) {
 
 			if existe && atuador.ConexaoTCP != nil {
 				// 1. Repassa o comando original para o atuador
-				fmt.Fprintf(atuador.ConexaoTCP, "%s\n", scanner.Text())
+				fmt.Fprintf(atuador.ConexaoTCP, "%s\n", dadosRecebidos.Text())
 
 				var dadosCmd map[string]interface{}
 				json.Unmarshal(msg.Conteudo, &dadosCmd)
@@ -151,15 +156,14 @@ func tratarConexaoTCP(conn net.Conn) {
 				// Se tiver target_temperature, atualiza também
 				if targetTemp, ok := dadosCmd["target_temperature"].(float64); ok {
 					atuador.TemperaturaAlvo = targetTemp
-					fmt.Printf("📝 [TCP] Atuador %s atualizado: target=%.1f°C\n", atuador.ID, targetTemp)
+					fmt.Printf("📝 [TCP] Atuador %s atualizado: Alvo=%.1f°C\n", atuador.ID, targetTemp)
 				}
 				atuador.UltimaAtualizacao = time.Now()
 				servico.mutex.Unlock()
 
-				// 3. CORREÇÃO: Quando desligar, envia 0 (zero) para o sensor iniciar resfriamento passivo
+				// Quando desligar, envia 0 para o sensor iniciar resfriamento passivo
 				if status, ok := dadosCmd["status"].(string); ok && status == "desligado" {
 					if atuador.SensorPareadoID != "" {
-						// Envia 0 para indicar que não há alvo de aquecimento
 						// O sensor então usará sua lógica de resfriamento passivo
 						go notificarSensorUDP(atuador.SensorPareadoID, 0.0)
 						fmt.Printf("📉 [Sincronia] Sensor %s: resfriamento natural iniciado (alvo=0)\n", atuador.SensorPareadoID)
@@ -264,7 +268,7 @@ func notificarSensorUDP(sensorID string, novaTemp float64) {
 		})
 	} else {
 		payload, _ = json.Marshal(map[string]interface{}{
-			"target_temperature": novaTemp,
+			"temperatura_alvo": novaTemp,
 		})
 	}
 
