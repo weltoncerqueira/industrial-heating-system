@@ -1,12 +1,14 @@
-# Adicionar no docker-compose.yaml do cliente:
-services:
-  cliente:
-    build: .
-    container_name: industrial-cliente
-    network_mode: host  # Já que os outros usam host network
-    environment:
-      - INTEGRATION_HOST=192.168.1.100  # IP do servidor
-      - SERVER_PORT=8081                # Porta HTTP da API
-    stdin_open: true
-    tty: true
-    command: ["-host=${INTEGRATION_HOST}", "-porta=${SERVER_PORT}"]
+FROM golang:1.21-alpine
+
+WORKDIR /app
+
+# Copiar todos os arquivos Go
+COPY . .
+
+# Compilar o cliente
+RUN go build -o cliente .
+
+# Cliente não expõe portas (apenas conecta)
+# O cliente é interativo, precisa de TTY
+
+ENTRYPOINT ["./cliente"]
